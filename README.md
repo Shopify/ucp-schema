@@ -348,3 +348,11 @@ Annotations control how fields appear in the resolved schema:
   "ucp_response": "required"
 }
 ```
+
+## More Information
+
+See **[FAQ.md](./FAQ.md)** for common questions about validator behavior and design decisions
+
+## License
+
+MIT

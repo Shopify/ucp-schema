@@ -370,7 +370,6 @@ fn parse_visibility_string(s: &str, path: &str) -> Result<Visibility, ResolveErr
     })
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

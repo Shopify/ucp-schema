@@ -64,11 +64,14 @@ mod validator;
 
 pub use compose::{
     compose_from_payload, compose_schema, detect_direction, extract_capabilities, Capability,
-    DetectedDirection,
+    DetectedDirection, SchemaBaseConfig,
 };
 pub use error::{ComposeError, ResolveError, SchemaError, ValidateError};
 pub use linter::{lint, lint_file, Diagnostic, FileResult, FileStatus, LintResult, Severity};
-pub use loader::{bundle_refs, load_schema, load_schema_auto, load_schema_str, navigate_fragment};
+pub use loader::{
+    bundle_refs, bundle_refs_with_url_mapping, load_schema, load_schema_auto, load_schema_str,
+    navigate_fragment,
+};
 pub use resolver::{resolve, strip_annotations};
 pub use types::{Direction, ResolveOptions, Visibility};
 pub use validator::{validate, validate_against_schema};

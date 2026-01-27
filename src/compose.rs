@@ -36,10 +36,28 @@ use std::path::Path;
 use serde_json::{json, Value};
 
 use crate::error::ComposeError;
-use crate::loader::{bundle_refs, is_url, load_schema};
+use crate::loader::{bundle_refs, bundle_refs_with_url_mapping, is_url, load_schema};
 
 #[cfg(feature = "remote")]
 use crate::loader::load_schema_url;
+
+/// Configuration for mapping schema URLs to local paths.
+///
+/// When both `local_base` and `remote_base` are set, URLs starting with
+/// `remote_base` have that prefix stripped before joining with `local_base`.
+///
+/// Example:
+/// - `remote_base`: `https://ucp.dev/draft`
+/// - `local_base`: `source`
+/// - URL: `https://ucp.dev/draft/schemas/checkout.json`
+/// - Result: `source/schemas/checkout.json`
+#[derive(Debug, Clone, Default)]
+pub struct SchemaBaseConfig<'a> {
+    /// Local directory containing schema files.
+    pub local_base: Option<&'a Path>,
+    /// URL prefix to strip when mapping to local paths.
+    pub remote_base: Option<&'a str>,
+}
 
 /// Capability declaration extracted from UCP metadata.
 #[derive(Debug, Clone)]
@@ -89,10 +107,10 @@ pub fn detect_direction(payload: &Value) -> Option<DetectedDirection> {
 ///
 /// # Arguments
 /// * `payload` - The UCP payload to extract capabilities from
-/// * `schema_base` - Optional local directory for resolving profile URLs
+/// * `schema_base` - Configuration for mapping schema URLs to local paths
 pub fn extract_capabilities(
     payload: &Value,
-    schema_base: Option<&Path>,
+    schema_base: &SchemaBaseConfig,
 ) -> Result<Vec<Capability>, ComposeError> {
     let ucp = payload.get("ucp").ok_or(ComposeError::NotSelfDescribing)?;
 
@@ -204,7 +222,7 @@ fn parse_capabilities_object(caps: &Value) -> Result<Vec<Capability>, ComposeErr
 }
 
 /// Fetch a profile from a URL or local path.
-fn fetch_profile(url: &str, schema_base: Option<&Path>) -> Result<Value, ComposeError> {
+fn fetch_profile(url: &str, schema_base: &SchemaBaseConfig) -> Result<Value, ComposeError> {
     resolve_schema_url(url, schema_base).map_err(|e| ComposeError::ProfileFetch {
         url: url.to_string(),
         message: e.to_string(),
@@ -219,7 +237,7 @@ fn fetch_profile(url: &str, schema_base: Option<&Path>) -> Result<Value, Compose
 /// 4. Composes using allOf
 pub fn compose_schema(
     capabilities: &[Capability],
-    schema_base: Option<&Path>,
+    schema_base: &SchemaBaseConfig,
 ) -> Result<Value, ComposeError> {
     if capabilities.is_empty() {
         return Err(ComposeError::EmptyCapabilities);
@@ -412,7 +430,7 @@ fn reaches_root(cap: &Capability, cap_map: &HashMap<&str, &Capability>, root_nam
 /// Convenience: extract capabilities and compose schema in one call.
 pub fn compose_from_payload(
     payload: &Value,
-    schema_base: Option<&Path>,
+    schema_base: &SchemaBaseConfig,
 ) -> Result<Value, ComposeError> {
     let capabilities = extract_capabilities(payload, schema_base)?;
     compose_schema(&capabilities, schema_base)
@@ -420,28 +438,54 @@ pub fn compose_from_payload(
 
 /// Resolve a schema URL to a Value, bundling any $ref pointers.
 ///
-/// If `schema_base` is provided, maps URL paths to local files.
+/// If `schema_base.local_base` is provided, maps URL paths to local files.
+/// If `schema_base.remote_base` is also provided, strips that prefix from URLs
+/// before mapping (enables versioned URL to unversioned local path mapping).
 /// Otherwise, fetches via HTTP.
 ///
 /// After loading, bundles external $ref pointers so the schema is self-contained.
 /// This is necessary because extension schemas often have relative refs like
 /// `$ref: "checkout.json"` that need resolution before composition.
-fn resolve_schema_url(url: &str, schema_base: Option<&Path>) -> Result<Value, ComposeError> {
-    if let Some(base) = schema_base {
-        // Map URL to local path by extracting the path portion
-        let path = extract_url_path(url)?;
+fn resolve_schema_url(url: &str, schema_base: &SchemaBaseConfig) -> Result<Value, ComposeError> {
+    if let Some(base) = schema_base.local_base {
+        // Map URL to local path
+        let path = if let Some(remote_base) = schema_base.remote_base {
+            // Strip remote_base prefix if URL starts with it
+            if let Some(remainder) = url.strip_prefix(remote_base) {
+                // remainder is like "/schemas/checkout.json"
+                remainder.to_string()
+            } else {
+                // URL doesn't match remote_base, fall back to extracting path
+                extract_url_path(url)?
+            }
+        } else {
+            // No remote_base, extract path portion of URL
+            extract_url_path(url)?
+        };
+
         let local_path = base.join(path.trim_start_matches('/'));
-        let mut schema = load_schema(&local_path).map_err(|e| ComposeError::SchemaFetch {
+        let mut schema = load_schema(&local_path).map_err(|_| ComposeError::SchemaFetch {
             url: url.to_string(),
-            message: e.to_string(),
+            message: format!("file not found: {}", local_path.display()),
         })?;
 
-        // Bundle refs using the schema's directory as base
+        // Bundle refs - use URL-aware version if remote mapping is configured
         let schema_dir = local_path.parent().unwrap_or(base);
-        bundle_refs(&mut schema, schema_dir).map_err(|e| ComposeError::SchemaFetch {
-            url: url.to_string(),
-            message: format!("bundling refs: {}", e),
-        })?;
+        if let Some(remote_base) = schema_base.remote_base {
+            // URL mapping configured - internal refs may also be absolute URLs
+            bundle_refs_with_url_mapping(&mut schema, schema_dir, base, remote_base).map_err(
+                |e| ComposeError::SchemaFetch {
+                    url: url.to_string(),
+                    message: format!("bundling refs: {}", e),
+                },
+            )?;
+        } else {
+            // No URL mapping - use simple relative path bundling
+            bundle_refs(&mut schema, schema_dir).map_err(|e| ComposeError::SchemaFetch {
+                url: url.to_string(),
+                message: format!("bundling refs: {}", e),
+            })?;
+        }
 
         Ok(schema)
     } else if is_url(url) {
@@ -675,7 +719,11 @@ mod tests {
         };
 
         // This will fail because checkout.json doesn't exist, but tests the logic path
-        let result = compose_schema(&[checkout], Some(Path::new("/nonexistent")));
+        let config = SchemaBaseConfig {
+            local_base: Some(Path::new("/nonexistent")),
+            remote_base: None,
+        };
+        let result = compose_schema(&[checkout], &config);
         assert!(matches!(result, Err(ComposeError::SchemaFetch { .. })));
     }
 
@@ -688,7 +736,8 @@ mod tests {
             extends: Some(vec!["dev.ucp.shopping.checkout".to_string()]),
         };
 
-        let result = compose_schema(&[discount], None);
+        let config = SchemaBaseConfig::default();
+        let result = compose_schema(&[discount], &config);
         assert!(matches!(result, Err(ComposeError::NoRootCapability)));
     }
 
@@ -708,7 +757,8 @@ mod tests {
             extends: None, // Bug: should extend checkout
         };
 
-        let result = compose_schema(&[checkout, fulfillment], None);
+        let config = SchemaBaseConfig::default();
+        let result = compose_schema(&[checkout, fulfillment], &config);
         assert!(matches!(
             result,
             Err(ComposeError::MultipleRootCapabilities { .. })
@@ -730,7 +780,8 @@ mod tests {
             extends: Some(vec!["dev.ucp.shopping.nonexistent".to_string()]),
         };
 
-        let result = compose_schema(&[checkout, discount], None);
+        let config = SchemaBaseConfig::default();
+        let result = compose_schema(&[checkout, discount], &config);
         assert!(matches!(result, Err(ComposeError::UnknownParent { .. })));
     }
 

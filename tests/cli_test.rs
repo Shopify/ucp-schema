@@ -1075,7 +1075,7 @@ mod compose {
             .args([
                 "validate",
                 "tests/fixtures/compose/response_checkout_only.json",
-                "--schema-base",
+                "--schema-local-base",
                 "tests/fixtures/compose",
                 "--response",
                 "--op",
@@ -1095,7 +1095,7 @@ mod compose {
             .args([
                 "validate",
                 "tests/fixtures/compose/response_with_extensions.json",
-                "--schema-base",
+                "--schema-local-base",
                 "tests/fixtures/compose",
                 "--response",
                 "--op",
@@ -1115,7 +1115,7 @@ mod compose {
             .args([
                 "validate",
                 "tests/fixtures/compose/response_checkout_only.json",
-                "--schema-base",
+                "--schema-local-base",
                 "tests/fixtures/compose",
                 "--op",
                 "read",
@@ -1124,6 +1124,71 @@ mod compose {
             .assert()
             .success()
             .stdout(predicate::str::contains("Valid"));
+    }
+
+    #[test]
+    fn schema_remote_base_maps_url_prefix() {
+        // Test that --schema-remote-base strips URL prefix when mapping to local
+        // Fixture has schema URL like https://ucp.dev/schemas/shopping/checkout.json
+        // With remote base, this maps to tests/fixtures/compose/schemas/shopping/checkout.json
+        let dir = TempDir::new().unwrap();
+        let payload = write_temp_file(
+            &dir,
+            "payload.json",
+            r#"{
+                "ucp": {
+                    "capabilities": {
+                        "dev.ucp.shopping.checkout": [{
+                            "version": "2026-01-11",
+                            "schema": "https://ucp.dev/versioned/schemas/shopping/checkout.json"
+                        }]
+                    },
+                    "payment_handlers": {}
+                },
+                "id": "123",
+                "line_items": [],
+                "status": "incomplete",
+                "currency": "USD",
+                "totals": [],
+                "links": []
+            }"#,
+        );
+
+        // Without remote base, would try to extract /versioned/schemas/... path
+        // With remote base https://ucp.dev/versioned, strips prefix leaving /schemas/...
+        cmd()
+            .args([
+                "validate",
+                payload.to_str().unwrap(),
+                "--schema-local-base",
+                "tests/fixtures/compose",
+                "--schema-remote-base",
+                "https://ucp.dev/versioned",
+                "--response",
+                "--op",
+                "read",
+                "--strict=false",
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Valid"));
+    }
+
+    #[test]
+    fn schema_remote_base_requires_local_base() {
+        // --schema-remote-base requires --schema-local-base
+        cmd()
+            .args([
+                "validate",
+                "tests/fixtures/compose/response_checkout_only.json",
+                "--schema-remote-base",
+                "https://ucp.dev/draft",
+                "--op",
+                "read",
+            ])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("schema-local-base"));
     }
 
     #[test]
@@ -1167,12 +1232,12 @@ mod compose {
 
     #[test]
     fn missing_schema_base_error() {
-        // Self-describing payload without --schema-base, no network (simulated by invalid path)
+        // Self-describing payload without --schema-local-base, no network (simulated by invalid path)
         cmd()
             .args([
                 "validate",
                 "tests/fixtures/compose/response_checkout_only.json",
-                "--schema-base",
+                "--schema-local-base",
                 "/nonexistent/schemas",
                 "--response",
                 "--op",
@@ -1201,7 +1266,7 @@ mod compose {
             .args([
                 "validate",
                 payload.to_str().unwrap(),
-                "--schema-base",
+                "--schema-local-base",
                 "tests/fixtures/compose",
                 "--response",
                 "--op",
@@ -1240,7 +1305,7 @@ mod compose {
             .args([
                 "validate",
                 payload.to_str().unwrap(),
-                "--schema-base",
+                "--schema-local-base",
                 "tests/fixtures/compose",
                 "--response",
                 "--op",
@@ -1268,7 +1333,7 @@ mod compose {
             .args([
                 "validate",
                 payload.to_str().unwrap(),
-                "--schema-base",
+                "--schema-local-base",
                 "tests/fixtures/compose",
                 "--response",
                 "--op",

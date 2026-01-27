@@ -96,12 +96,13 @@ ucp-schema validate <payload> --op <operation> [options]
 ucp-schema validate <payload> --schema <schema> --request|--response --op <operation> [options]
 
 Options:
-  --schema <path>      Explicit schema (overrides self-describing mode)
-  --schema-base <dir>  Local directory to resolve schema URLs (see Validation Modes)
-  --request            Direction is request (required with --schema, auto-detected otherwise)
-  --response           Direction is response (required with --schema, auto-detected otherwise)
-  --json               Output results as JSON (for automation)
-  --strict=true        Reject unknown fields (default: false, see Validation)
+  --schema <path>              Explicit schema (overrides self-describing mode)
+  --schema-local-base <dir>    Local directory to resolve schema URLs (see Validation Modes)
+  --schema-remote-base <url>   URL prefix to strip when mapping to local (see URL Prefix Mapping)
+  --request                    Direction is request (required with --schema, auto-detected otherwise)
+  --response                   Direction is response (required with --schema, auto-detected otherwise)
+  --json                       Output results as JSON (for automation)
+  --strict=true                Reject unknown fields (default: false, see Validation)
 ```
 
 Exit codes:
@@ -117,7 +118,7 @@ The validator supports three modes based on which flags you provide:
 | Mode | Command | Schema Source | Direction |
 |------|---------|---------------|-----------|
 | **Self-describing + remote** | `validate payload.json --op read` | `ucp.capabilities` URLs fetched | Auto-detected |
-| **Self-describing + local** | `validate payload.json --schema-base ./dir --op read` | `ucp.capabilities` URLs mapped to local files | Auto-detected |
+| **Self-describing + local** | `validate payload.json --schema-local-base ./dir --op read` | `ucp.capabilities` URLs mapped to local files | Auto-detected |
 | **Explicit schema** | `validate payload.json --schema schema.json --request --op create` | Specified schema file/URL | Must specify `--request` or `--response` |
 
 **Mode 1: Self-describing + remote fetch**
@@ -140,13 +141,33 @@ Same as above, but schema URLs are resolved to local files instead of fetched:
 ```bash
 # Schema URL https://ucp.dev/schemas/shopping/checkout.json
 # Maps to: ./local/schemas/shopping/checkout.json
-ucp-schema validate response.json --schema-base ./local --op read
+ucp-schema validate response.json --schema-local-base ./local --op read
 ```
 
-The `--schema-base` flag maps URL paths to local files:
+The `--schema-local-base` flag maps URL paths to local files:
 - URL: `https://ucp.dev/schemas/shopping/checkout.json`
 - Path extracted: `/schemas/shopping/checkout.json`
-- Local file: `{schema-base}/schemas/shopping/checkout.json`
+- Local file: `{schema-local-base}/schemas/shopping/checkout.json`
+
+**URL Prefix Mapping**
+
+When schema URLs have versioned prefixes that don't match your local directory structure, use `--schema-remote-base` to strip the prefix:
+
+```bash
+# Schema URL: https://ucp.dev/draft/schemas/shopping/checkout.json
+# Local path: ./site/schemas/shopping/checkout.json (no "draft" directory)
+ucp-schema validate response.json \
+  --schema-local-base ./site \
+  --schema-remote-base "https://ucp.dev/draft" \
+  --op read
+```
+
+Mapping with `--schema-remote-base`:
+- URL: `https://ucp.dev/draft/schemas/shopping/checkout.json`
+- Strip prefix: `https://ucp.dev/draft` → `/schemas/shopping/checkout.json`
+- Local file: `{schema-local-base}/schemas/shopping/checkout.json`
+
+This is useful when published schemas have versioned `$id` URLs but your local files are organized without the version prefix.
 
 Useful for: offline testing, local development, testing schema changes before deployment.
 

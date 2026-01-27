@@ -8,7 +8,8 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use ucp_schema::{
     bundle_refs, compose_from_payload, detect_direction, lint, load_schema, load_schema_auto,
-    resolve, validate, DetectedDirection, Direction, FileStatus, ResolveOptions, ValidateError,
+    resolve, validate, DetectedDirection, Direction, FileStatus, ResolveOptions, SchemaBaseConfig,
+    ValidateError,
 };
 
 #[derive(Parser)]
@@ -69,9 +70,13 @@ enum Commands {
         #[arg(long)]
         schema: Option<String>,
 
-        /// Local directory for schema URL resolution
+        /// Local directory containing schema files
         #[arg(long)]
-        schema_base: Option<PathBuf>,
+        schema_local_base: Option<PathBuf>,
+
+        /// URL prefix to strip when mapping to local (e.g., https://ucp.dev/draft)
+        #[arg(long, requires = "schema_local_base")]
+        schema_remote_base: Option<String>,
 
         /// Validate as request (auto-inferred if omitted)
         #[arg(long, conflicts_with = "response")]
@@ -131,7 +136,8 @@ fn main() -> ExitCode {
         Commands::Validate {
             payload,
             schema,
-            schema_base,
+            schema_local_base,
+            schema_remote_base,
             request,
             response,
             op,
@@ -140,7 +146,8 @@ fn main() -> ExitCode {
         } => run_validate(ValidateArgs {
             payload,
             schema,
-            schema_base,
+            schema_local_base,
+            schema_remote_base,
             request,
             response,
             op,
@@ -225,7 +232,8 @@ fn run_resolve(
 struct ValidateArgs {
     payload: PathBuf,
     schema: Option<String>,
-    schema_base: Option<PathBuf>,
+    schema_local_base: Option<PathBuf>,
+    schema_remote_base: Option<String>,
     request: bool,
     response: bool,
     op: String,
@@ -237,7 +245,8 @@ fn run_validate(args: ValidateArgs) -> Result<(), u8> {
     let ValidateArgs {
         payload: payload_path,
         schema: schema_source,
-        schema_base,
+        schema_local_base,
+        schema_remote_base,
         request,
         response,
         op,
@@ -279,8 +288,11 @@ fn run_validate(args: ValidateArgs) -> Result<(), u8> {
         }
         None => {
             // Self-describing mode - compose from payload's UCP metadata
-            let base = schema_base.as_deref();
-            compose_from_payload(&payload, base).map_err(|e| {
+            let config = SchemaBaseConfig {
+                local_base: schema_local_base.as_deref(),
+                remote_base: schema_remote_base.as_deref(),
+            };
+            compose_from_payload(&payload, &config).map_err(|e| {
                 report_error(json_output, &e.to_string());
                 e.exit_code() as u8
             })?

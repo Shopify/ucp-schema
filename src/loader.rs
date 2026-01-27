@@ -130,6 +130,36 @@ pub fn bundle_refs(schema: &mut Value, base_dir: &Path) -> Result<(), ResolveErr
         schema,
         base_dir,
         None,
+        None,
+        None,
+        &mut std::collections::HashSet::new(),
+    )
+}
+
+/// Bundle external $ref pointers with URL-to-local-path mapping.
+///
+/// Like `bundle_refs`, but handles absolute URL refs by mapping them to local paths.
+/// When a ref starts with `remote_base`, that prefix is stripped and the remainder
+/// is joined to `local_base` to form the local file path.
+///
+/// # Example
+/// ```text
+/// remote_base = "https://ucp.dev/draft"
+/// local_base = Path::new("site")
+/// $ref = "https://ucp.dev/draft/schemas/ucp.json" -> "site/schemas/ucp.json"
+/// ```
+pub fn bundle_refs_with_url_mapping(
+    schema: &mut Value,
+    base_dir: &Path,
+    local_base: &Path,
+    remote_base: &str,
+) -> Result<(), ResolveError> {
+    bundle_refs_inner(
+        schema,
+        base_dir,
+        None,
+        Some(local_base),
+        Some(remote_base),
         &mut std::collections::HashSet::new(),
     )
 }
@@ -138,6 +168,8 @@ fn bundle_refs_inner(
     schema: &mut Value,
     base_dir: &Path,
     file_root: Option<&Value>, // Root of external file for resolving internal refs
+    url_local_base: Option<&Path>,
+    url_remote_base: Option<&str>,
     visited: &mut std::collections::HashSet<String>,
 ) -> Result<(), ResolveError> {
     match schema {
@@ -152,7 +184,14 @@ fn bundle_refs_inner(
                     } else if let Some(root) = file_root {
                         let mut target = navigate_fragment(root, ref_val)?;
                         // Recursively process (may have nested refs)
-                        bundle_refs_inner(&mut target, base_dir, file_root, visited)?;
+                        bundle_refs_inner(
+                            &mut target,
+                            base_dir,
+                            file_root,
+                            url_local_base,
+                            url_remote_base,
+                            visited,
+                        )?;
                         // Inline the resolved definition
                         obj.remove("$ref");
                         if let Value::Object(ref_obj) = target {
@@ -164,13 +203,16 @@ fn bundle_refs_inner(
                     }
                     // No file_root = root schema, leave for validator
                 } else {
-                    // External ref - load the file
+                    // External ref - may be relative path or absolute URL
                     let (file_part, fragment) = match ref_val.find('#') {
                         Some(idx) => (&ref_val[..idx], Some(&ref_val[idx..])),
                         None => (ref_val, None),
                     };
 
-                    let ref_path = base_dir.join(file_part);
+                    // Resolve ref to local path, handling URL mapping if configured
+                    let ref_path =
+                        resolve_ref_to_path(file_part, base_dir, url_local_base, url_remote_base);
+
                     let canonical = ref_path.canonicalize().unwrap_or(ref_path.clone());
                     let visit_key = format!("{}|{}", canonical.display(), fragment.unwrap_or(""));
 
@@ -191,7 +233,14 @@ fn bundle_refs_inner(
                     visited.insert(visit_key.clone());
                     let ref_dir = ref_path.parent().unwrap_or(base_dir);
                     // Pass loaded file as file_root so internal refs resolve against it
-                    bundle_refs_inner(&mut target, ref_dir, Some(&loaded), visited)?;
+                    bundle_refs_inner(
+                        &mut target,
+                        ref_dir,
+                        Some(&loaded),
+                        url_local_base,
+                        url_remote_base,
+                        visited,
+                    )?;
                     visited.remove(&visit_key);
 
                     obj.remove("$ref");
@@ -206,17 +255,54 @@ fn bundle_refs_inner(
 
             // Recurse into all values
             for value in obj.values_mut() {
-                bundle_refs_inner(value, base_dir, file_root, visited)?;
+                bundle_refs_inner(
+                    value,
+                    base_dir,
+                    file_root,
+                    url_local_base,
+                    url_remote_base,
+                    visited,
+                )?;
             }
         }
         Value::Array(arr) => {
             for item in arr {
-                bundle_refs_inner(item, base_dir, file_root, visited)?;
+                bundle_refs_inner(
+                    item,
+                    base_dir,
+                    file_root,
+                    url_local_base,
+                    url_remote_base,
+                    visited,
+                )?;
             }
         }
         _ => {}
     }
     Ok(())
+}
+
+/// Resolve a $ref value to a local file path.
+///
+/// If URL mapping is configured and the ref matches the remote base,
+/// strips the prefix and joins to local_base. Otherwise uses base_dir
+/// for relative path resolution.
+fn resolve_ref_to_path(
+    ref_val: &str,
+    base_dir: &Path,
+    url_local_base: Option<&Path>,
+    url_remote_base: Option<&str>,
+) -> std::path::PathBuf {
+    // Check if this is an absolute URL that matches our remote base
+    if let (Some(local_base), Some(remote_base)) = (url_local_base, url_remote_base) {
+        if let Some(remainder) = ref_val.strip_prefix(remote_base) {
+            // URL matches remote base - map to local path
+            return local_base.join(remainder.trim_start_matches('/'));
+        }
+    }
+
+    // Default: treat as relative path from base_dir
+    base_dir.join(ref_val)
 }
 
 /// Load a schema from a file path or URL.
@@ -310,6 +396,66 @@ mod tests {
 
         let schema = load_schema_auto(file.path().to_str().unwrap()).unwrap();
         assert_eq!(schema["type"], "string");
+    }
+
+    #[test]
+    fn resolve_ref_to_path_with_url_mapping() {
+        let base_dir = Path::new("/some/dir");
+        let local_base = Path::new("/local/schemas");
+        let remote_base = "https://ucp.dev/draft";
+
+        // URL matching remote base gets mapped to local
+        let path = resolve_ref_to_path(
+            "https://ucp.dev/draft/schemas/ucp.json",
+            base_dir,
+            Some(local_base),
+            Some(remote_base),
+        );
+        assert_eq!(path, Path::new("/local/schemas/schemas/ucp.json"));
+    }
+
+    #[test]
+    fn resolve_ref_to_path_url_not_matching_remote() {
+        let base_dir = Path::new("/some/dir");
+        let local_base = Path::new("/local/schemas");
+        let remote_base = "https://ucp.dev/draft";
+
+        // URL not matching remote base falls back to base_dir join
+        let path = resolve_ref_to_path(
+            "https://other.com/schemas/foo.json",
+            base_dir,
+            Some(local_base),
+            Some(remote_base),
+        );
+        assert_eq!(
+            path,
+            Path::new("/some/dir/https://other.com/schemas/foo.json")
+        );
+    }
+
+    #[test]
+    fn resolve_ref_to_path_relative_ref() {
+        let base_dir = Path::new("/some/dir");
+
+        // Relative ref without URL mapping
+        let path = resolve_ref_to_path("types/buyer.json", base_dir, None, None);
+        assert_eq!(path, Path::new("/some/dir/types/buyer.json"));
+    }
+
+    #[test]
+    fn resolve_ref_to_path_strips_leading_slash() {
+        let base_dir = Path::new("/some/dir");
+        let local_base = Path::new("/local");
+        let remote_base = "https://ucp.dev/draft";
+
+        // Stripping remote base leaves "/schemas/..." - leading slash should be trimmed
+        let path = resolve_ref_to_path(
+            "https://ucp.dev/draft/schemas/foo.json",
+            base_dir,
+            Some(local_base),
+            Some(remote_base),
+        );
+        assert_eq!(path, Path::new("/local/schemas/foo.json"));
     }
 
     // Remote tests - require network, use httpbin.org for reliable testing

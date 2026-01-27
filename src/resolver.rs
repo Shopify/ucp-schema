@@ -3,10 +3,7 @@
 use serde_json::{Map, Value};
 
 use crate::error::ResolveError;
-use crate::types::{Direction, ResolveOptions, Visibility};
-
-/// UCP annotation keys to strip from output.
-const UCP_ANNOTATIONS: &[&str] = &["ucp_request", "ucp_response"];
+use crate::types::{json_type_name, Direction, ResolveOptions, Visibility, UCP_ANNOTATIONS};
 
 /// Resolve a schema for a specific direction and operation.
 ///
@@ -125,7 +122,7 @@ pub fn get_visibility(
                 Some(Value::String(s)) => parse_visibility_string(s, path),
                 Some(other) => Err(ResolveError::InvalidAnnotationType {
                     path: format!("{}/{}", path, operation),
-                    actual: json_type_name(other),
+                    actual: json_type_name(other).to_string(),
                 }),
                 // Operation not specified → default to include
                 None => Ok(Visibility::Include),
@@ -135,7 +132,7 @@ pub fn get_visibility(
         // Invalid type
         other => Err(ResolveError::InvalidAnnotationType {
             path: path.to_string(),
-            actual: json_type_name(other),
+            actual: json_type_name(other).to_string(),
         }),
     }
 }
@@ -373,17 +370,6 @@ fn parse_visibility_string(s: &str, path: &str) -> Result<Visibility, ResolveErr
     })
 }
 
-fn json_type_name(value: &Value) -> String {
-    match value {
-        Value::Null => "null",
-        Value::Bool(_) => "boolean",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
-    }
-    .to_string()
-}
 
 #[cfg(test)]
 mod tests {

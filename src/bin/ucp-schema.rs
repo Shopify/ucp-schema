@@ -2,13 +2,13 @@
 //!
 //! Command-line interface for resolving and validating UCP schemas.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use ucp_schema::{
-    bundle_refs, compose_from_payload, detect_direction, load_schema, load_schema_auto, resolve,
-    validate, DetectedDirection, Direction, ResolveOptions, ValidateError,
+    bundle_refs, compose_from_payload, detect_direction, lint, load_schema, load_schema_auto,
+    resolve, validate, DetectedDirection, Direction, FileStatus, ResolveOptions, ValidateError,
 };
 
 #[derive(Parser)]
@@ -93,6 +93,24 @@ enum Commands {
         #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
         strict: bool,
     },
+
+    /// Lint schema files for errors (syntax, broken refs, invalid annotations)
+    Lint {
+        /// File or directory to lint
+        path: PathBuf,
+
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text")]
+        format: String,
+
+        /// Treat warnings as errors
+        #[arg(long)]
+        strict: bool,
+
+        /// Suppress progress output, only show errors
+        #[arg(long, short)]
+        quiet: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -129,6 +147,13 @@ fn main() -> ExitCode {
             json_output: json,
             strict,
         }),
+
+        Commands::Lint {
+            path,
+            format,
+            strict,
+            quiet,
+        } => run_lint(&path, &format, strict, quiet),
     };
 
     match result {
@@ -301,5 +326,76 @@ fn report_error(json_output: bool, msg: &str) {
         println!(r#"{{"valid":false,"error":"{}"}}"#, msg);
     } else {
         eprintln!("Error: {}", msg);
+    }
+}
+
+fn run_lint(path: &Path, format: &str, strict: bool, quiet: bool) -> Result<(), u8> {
+    use ucp_schema::Severity;
+
+    if !path.exists() {
+        eprintln!("Error: path not found: {}", path.display());
+        return Err(2);
+    }
+
+    let result = lint(path, strict);
+
+    if format == "json" {
+        println!("{}", serde_json::to_string_pretty(&result).unwrap());
+    } else {
+        // Text output
+        if !quiet {
+            println!("Linting {} ...\n", path.display());
+        }
+
+        for file_result in &result.results {
+            let status_icon = match file_result.status {
+                FileStatus::Ok => "\x1b[32m✓\x1b[0m",
+                FileStatus::Warning => "\x1b[33m⚠\x1b[0m",
+                FileStatus::Error => "\x1b[31m✗\x1b[0m",
+            };
+
+            if !quiet || file_result.status != FileStatus::Ok {
+                println!("  {} {}", status_icon, file_result.file.display());
+            }
+
+            for diag in &file_result.diagnostics {
+                let color = match diag.severity {
+                    Severity::Error => "\x1b[31m",
+                    Severity::Warning => "\x1b[33m",
+                };
+                if !quiet || diag.severity == Severity::Error {
+                    println!(
+                        "    {}{}[{}]\x1b[0m: {} - {}",
+                        color,
+                        match diag.severity {
+                            Severity::Error => "error",
+                            Severity::Warning => "warning",
+                        },
+                        diag.code,
+                        diag.path,
+                        diag.message
+                    );
+                }
+            }
+        }
+
+        println!();
+        if result.is_ok() && (!strict || result.warnings == 0) {
+            println!(
+                "\x1b[32m✓ {} files checked, all passed\x1b[0m",
+                result.files_checked
+            );
+        } else {
+            println!(
+                "\x1b[31m✗ {} files checked: {} passed, {} failed ({} errors, {} warnings)\x1b[0m",
+                result.files_checked, result.passed, result.failed, result.errors, result.warnings
+            );
+        }
+    }
+
+    if result.is_ok() && (!strict || result.warnings == 0) {
+        Ok(())
+    } else {
+        Err(1)
     }
 }

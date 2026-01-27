@@ -1,6 +1,25 @@
 //! Core types for UCP schema resolution.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+/// Valid UCP operations for annotation object form.
+pub const VALID_OPERATIONS: &[&str] = &["create", "update", "complete", "read"];
+
+/// UCP annotation keys.
+pub const UCP_ANNOTATIONS: &[&str] = &["ucp_request", "ucp_response"];
+
+/// Returns the JSON type name for error messages.
+pub fn json_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
 
 /// Direction of the schema transformation.
 ///

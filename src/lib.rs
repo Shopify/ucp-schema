@@ -56,6 +56,7 @@
 
 mod compose;
 mod error;
+mod linter;
 mod loader;
 mod resolver;
 mod types;
@@ -66,7 +67,8 @@ pub use compose::{
     DetectedDirection,
 };
 pub use error::{ComposeError, ResolveError, SchemaError, ValidateError};
-pub use loader::{bundle_refs, load_schema, load_schema_auto, load_schema_str};
+pub use linter::{lint, lint_file, Diagnostic, FileResult, FileStatus, LintResult, Severity};
+pub use loader::{bundle_refs, load_schema, load_schema_auto, load_schema_str, navigate_fragment};
 pub use resolver::{resolve, strip_annotations};
 pub use types::{Direction, ResolveOptions, Visibility};
 pub use validator::{validate, validate_against_schema};

@@ -181,6 +181,79 @@ ucp-schema validate order.json --schema checkout.json --request --op create --js
 # Or:     {"valid":false,"errors":[{"path":"","message":"..."}]}
 ```
 
+### `lint` - Static analysis of schema files
+
+Catch schema errors before runtime. The linter checks for issues that would cause failures during resolution or validation.
+
+```bash
+ucp-schema lint <path> [options]
+
+Options:
+  --format <text|json>  Output format (default: text)
+  --strict              Treat warnings as errors
+  --quiet, -q           Only show errors, suppress progress
+```
+
+**What it checks:**
+
+| Category | Issue | Severity |
+|----------|-------|----------|
+| Syntax | Invalid JSON | Error |
+| References | `$ref` to missing file | Error |
+| References | `$ref` to missing anchor (e.g., `#/$defs/foo`) | Error |
+| Annotations | Invalid `ucp_*` type (must be string or object) | Error |
+| Annotations | Invalid visibility value (must be omit/required/optional) | Error |
+| Hygiene | Missing `$id` field | Warning |
+| Hygiene | Unknown operation in annotation (e.g., `{"delete": "omit"}`) | Warning |
+
+**Examples:**
+
+```bash
+# Lint a directory of schemas
+ucp-schema lint schemas/
+
+# Lint single file, fail on warnings
+ucp-schema lint checkout.json --strict
+
+# CI-friendly JSON output
+ucp-schema lint schemas/ --format json
+
+# Quiet mode - only show errors
+ucp-schema lint schemas/ --quiet
+```
+
+**Exit codes:**
+- `0` - All files passed (or only warnings in non-strict mode)
+- `1` - Errors found (or warnings in strict mode)
+- `2` - Path not found
+
+**JSON output format:**
+
+```json
+{
+  "path": "schemas/",
+  "files_checked": 5,
+  "passed": 4,
+  "failed": 1,
+  "errors": 1,
+  "warnings": 2,
+  "results": [
+    {
+      "file": "checkout.json",
+      "status": "error",
+      "diagnostics": [
+        {
+          "severity": "error",
+          "code": "E002",
+          "path": "/properties/buyer/$ref",
+          "message": "file not found: types/buyer.json"
+        }
+      ]
+    }
+  ]
+}
+```
+
 ## Schema Composition from Capabilities
 
 UCP responses are self-describing - they embed `ucp.capabilities` declaring which schemas apply:

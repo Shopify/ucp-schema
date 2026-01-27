@@ -93,7 +93,10 @@ pub fn is_url(s: &str) -> bool {
 }
 
 /// Navigate a JSON Pointer fragment (e.g., "#/$defs/foo" or "#/properties/bar").
-fn navigate_fragment(schema: &Value, fragment: &str) -> Result<Value, ResolveError> {
+///
+/// Returns the value at the given JSON Pointer path within the schema.
+/// The fragment should start with '#' (e.g., "#/$defs/foo").
+pub fn navigate_fragment(schema: &Value, fragment: &str) -> Result<Value, ResolveError> {
     // Remove leading # and split by /
     let path = fragment.trim_start_matches('#').trim_start_matches('/');
     if path.is_empty() {

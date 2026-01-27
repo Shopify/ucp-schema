@@ -1,14 +1,15 @@
 # ucp-schema
 
-CLI and library for working with UCP-annotated JSON Schemas.
-
-UCP schemas use `ucp_request` and `ucp_response` annotations to define field visibility per operation. This tool resolves those annotations into standard JSON Schema, letting you validate payloads for specific operations (create, read, update, etc.).
+CLI and library for working with [Universal Commerce Protocol](https://ucp.dev/latest/) (UCP) JSON Schemas. UCP schemas use `ucp_request` and `ucp_response` annotations to define field visibility per operation. This tool resolves those annotations into standard JSON Schema, letting you lint, resolve, and validate UCP request and response payloads for different operations.
 
 ## Installation
 
 ```bash
 # Install from crates.io
 cargo install ucp-schema
+
+# Install latest from git
+cargo install --git https://github.com/anthropics/ucp-schema 
 
 # Or build from source
 git clone https://github.com/Shopify/ucp-schema

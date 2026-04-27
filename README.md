@@ -9,7 +9,7 @@ CLI and library for working with [Universal Commerce Protocol](https://ucp.dev/l
 cargo install ucp-schema
 
 # Install latest from git
-cargo install --git https://github.com/anthropics/ucp-schema 
+cargo install --git https://github.com/Shopify/ucp-schema 
 
 # Or build from source
 git clone https://github.com/Shopify/ucp-schema

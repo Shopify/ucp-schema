@@ -1,3 +1,5 @@
+> **This repository is no longer maintained.** It has been archived by Shopify and receives no updates or security fixes.
+
 # ucp-schema
 
 CLI and library for working with [Universal Commerce Protocol](https://ucp.dev/latest/) (UCP) JSON Schemas. UCP schemas use `ucp_request` and `ucp_response` annotations to define field visibility per operation. This tool resolves those annotations into standard JSON Schema, letting you lint, resolve, and validate UCP request and response payloads for different operations.
